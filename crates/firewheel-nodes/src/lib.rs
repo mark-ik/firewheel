@@ -39,6 +39,9 @@ pub mod fast_rms;
 #[cfg(feature = "triple_buffer")]
 pub mod triple_buffer;
 
+#[cfg(feature = "stream")]
+pub mod stream;
+
 mod stereo_to_mono;
 
 pub use stereo_to_mono::StereoToMonoNode;

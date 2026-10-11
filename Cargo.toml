@@ -92,6 +92,9 @@ spatial_basic_node = [
 # audio graph to another thread. Useful for cases where you only care
 # about the latest data in the buffer, such as for creating visualizers.
 triple_buffer_node = ["firewheel-nodes/triple_buffer"]
+# Bounded continuous capture and producer playback for standalone hosts.
+# Requires std; Bevy ECS remains optional.
+stream_nodes = ["std", "firewheel-nodes/stream"]
 # Enables the white and pink noise generator nodes
 noise_gen_nodes = ["firewheel-nodes/noise_generators"]
 # Enables FastLowpassNode, FastHighpassNode, and FastBandpassNode
@@ -232,6 +235,7 @@ opt-level = 3
 
 [dev-dependencies]
 criterion = "0.7"
+audioadapter-buffers.workspace = true
 
 [[bench]]
 name = "core"

@@ -6,6 +6,26 @@
 
 An open source audio graph engine for games and other applications, written in Rust. It can be used as-is, or it can be used as a base for other higher-level audio engines.
 
+## Standalone fork contract
+
+This fork preserves Billy Messenger's Firewheel graph kernel and attribution.
+Our maintained standalone boundary is bounded continuous capture and producer
+playback, with explicit source-frame accounting. Musical projects, file/network
+decoders, identity, persistence, and device admission remain application concerns.
+
+Enable **stream_nodes** for the restored nodes::stream::{reader, writer} API.
+It requires std; it does not enable Bevy ECS. Queue capacity is measured at the
+output rate, admission reserves actual resampler packet bounds, capture adds no
+latency zeros, and autocorrection must be disabled explicitly. EOF flushes partial
+packets without introducing source padding. Initial playback silence and underrun
+silence never advance source time. Host handles may lock; audio processing uses
+owned SPSC endpoints and preallocated buffers.
+
+See the [foundation plan and migration contract](design_docs/2026-10-11_standalone_stream_foundation.md)
+for supported semantics, validation, and the remaining device/native acceptance
+gates. This is a Git-pinned fork extension; registry Firewheel 0.14 does not provide
+these restored nodes.
+
 ## The Future of this Project
 
 Firewheel is currently planned to be upstreamed into the [Bevy](https://bevy.org/) game engine where it will become the default audio engine. (The current implementation can be found in the [bevy_seedling](https://github.com/CorvusPrudens/bevy_seedling) repository.) The goal is to both make Bevy integration easier by avoiding circular dependencies, and to ease the maintanance burden of a project that has experienced more feature creep than what the author originally anticipated.

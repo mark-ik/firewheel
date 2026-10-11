@@ -12,6 +12,35 @@ env:
     RUSTDOCFLAGS: --deny warnings
 
 jobs:
+    standalone-streams:
+        name: Standalone streams (${{ matrix.os }})
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, macos-latest, windows-latest]
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: 1.97.1
+            # This library intentionally does not track Cargo.lock. Generate it
+            # before locked checks, and keep device backends out of this CPU gate.
+            - run: cargo generate-lockfile
+            - name: Bounded stream graph tests
+              run: cargo test --locked -p firewheel --no-default-features --features std,stream_nodes --test stream_nodes
+            - name: Preserve no_std boundary
+              run: cargo check --locked -p firewheel --no-default-features --features libm
+            - name: No Bevy ECS in the standalone graph
+              shell: bash
+              run: |
+                  cargo tree --locked -p firewheel --no-default-features --features std,stream_nodes --edges normal --prefix none > standalone-dependencies.txt
+                  if grep -q '^bevy_ecs ' standalone-dependencies.txt; then
+                    cat standalone-dependencies.txt
+                    exit 1
+                  fi
+
     # Run tests.
     test:
         name: Tests
@@ -34,6 +63,7 @@ jobs:
 
             - name: Run tests
               run: |
+                  cargo generate-lockfile
                   cargo test --locked --workspace --all-features --all-targets
 
             - name: Test realtime audio garbage collector
@@ -82,4 +112,6 @@ jobs:
                   sweep-cache: true
 
             - name: Check documentation
-              run: cargo doc --locked --workspace --all-features --no-deps
+              run: |
+                  cargo generate-lockfile
+                  cargo doc --locked --workspace --all-features --no-deps
