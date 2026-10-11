@@ -22,6 +22,13 @@ belongs in these nodes. Bevy ECS is optional; stream_nodes enables std only.
 - Writer: host-produced media to graph outputs through a bounded SPSC queue.
   Mono/stereo/channel mapping remains a graph-routing decision.
 - Channel counts 1 through 16 inclusive.
+- Input/output rates 1,000 through 384,000 Hz inclusive and rate ratios within
+  1/64 through 64. Chunk sizes are 1 through 8,192. High-quality FFT conversion
+  additionally limits each reduced integer rate grain to 8,192 frames; other
+  qualities can handle coprime rates within the same resource bounds. Estimated
+  output packet bounds above 65,536 frames and queues above 16,777,216 samples
+  return InvalidConfig before resampler construction. These are deliberate
+  standalone resource limits, not support for every nonzero u32 rate.
 - Equal-rate paths preserve sample values and frame order. Unequal rates use the
   configured fixed-ratio resampler; all buffers are allocated before processing.
 - capacity_seconds means seconds at the **output rate**. Actual capacity is at
@@ -110,6 +117,7 @@ stream events, endpoint replacement and resampler EOF:
 
 ~~~sh
 cargo +1.97.1 test -p firewheel --no-default-features --features std,stream_nodes --test stream_nodes
+cargo +1.97.1 test -p firewheel-nodes --no-default-features --features stream --lib
 cargo +1.97.1 check -p firewheel --no-default-features --features std,stream_nodes,serde,scheduled_events
 cargo +1.97.1 tree -p firewheel --no-default-features --features std,stream_nodes -i bevy_ecs
 ~~~
@@ -121,7 +129,11 @@ initial latency, underrun clock behavior, subpacket EOF, and uneven backlog pack
 at 1k→48k, 8k→44.1k, 11.025k→48k, 22.05k→48k, 48k→44.1k, 48k→8k,
 44.1k→48k and equal-rate conversion.
 
-Local result: 14 integration tests passed, zero callback allocations/deallocations.
+Local result: 14 integration tests passed, zero callback allocations/deallocations,
+plus a synchronized 10,000-generation concurrent EOF publication test. Extreme/
+unsupported configurations are refused before resampler allocation; refusal tests
+assert zero allocations. EOF stats acquires the finished publication fence before
+reading final producer counters and subsequent consumption.
 Strict Clippy passed for nodes and integration tests, as did rustfmt, warning-denied
 node rustdoc, no_std/libm, serde/scheduled-events, all node features, and the
 CPAL/sampler/peak-meter/tracing consumer feature combination. Standalone dependency

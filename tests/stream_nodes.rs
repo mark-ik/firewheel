@@ -462,6 +462,25 @@ fn configuration_refuses_implicit_clock_correction_and_invalid_bounds() {
         state.start_stream(nz(8_000), nz(48_000), config),
         Err(StreamError::InvalidConfig)
     ));
+    for (input_rate, output_rate) in [
+        (1, 48_000),
+        (48_000, u32::MAX),
+        (999, 48_000),
+        (384_001, 48_000),
+        (1_000, 384_000),
+        (48_000, 44_101),
+    ] {
+        ALLOCATIONS.with(|n| n.set(0));
+        TRACK.with(|track| track.set(true));
+        let result = state.start_stream(nz(input_rate), nz(output_rate), media_channel_config(0.1));
+        TRACK.with(|track| track.set(false));
+        assert!(matches!(result, Err(StreamError::InvalidConfig)));
+        assert_eq!(
+            ALLOCATIONS.with(Cell::get),
+            0,
+            "invalid rates allocated before refusal"
+        );
+    }
 }
 
 #[test]

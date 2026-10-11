@@ -29,7 +29,9 @@ jobs:
             # before locked checks, and keep device backends out of this CPU gate.
             - run: cargo generate-lockfile
             - name: Bounded stream graph tests
-              run: cargo test --locked -p firewheel --no-default-features --features std,stream_nodes --test stream_nodes
+              run: |
+                  cargo test --locked -p firewheel --no-default-features --features std,stream_nodes --test stream_nodes
+                  cargo test --locked -p firewheel-nodes --no-default-features --features stream --lib
             - name: Preserve no_std boundary
               run: cargo check --locked -p firewheel --no-default-features --features libm
             - name: No Bevy ECS in the standalone graph

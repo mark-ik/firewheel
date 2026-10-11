@@ -21,6 +21,9 @@ pub use fixed_resample::{
 
 /// Largest channel count supported by these nodes, inclusive.
 pub const MAX_CHANNELS: usize = 16;
+/// Supported input/output sample rate range, inclusive.
+pub const MIN_SAMPLE_RATE: u32 = 1_000;
+pub const MAX_SAMPLE_RATE: u32 = 384_000;
 
 /// A configuration for bounded media with no source-time autocorrection.
 ///

@@ -30,11 +30,14 @@ pub(super) struct Shared {
 
 impl Shared {
     pub fn stats(&self) -> StreamStats {
-        let consumed = self.consumed.load(Ordering::Acquire);
-        let discarded = self.discarded.load(Ordering::Acquire);
+        // EOF is the publication fence for the final accepted/produced values.
+        // Acquiring it after those values could observe finished=true with an
+        // old produced=0 and incorrectly retire queued final output as drained.
+        let finished = self.finished.load(Ordering::Acquire);
         let produced = self.produced.load(Ordering::Acquire);
         let accepted = self.accepted.load(Ordering::Acquire);
-        let finished = self.finished.load(Ordering::Acquire);
+        let consumed = self.consumed.load(Ordering::Acquire);
+        let discarded = self.discarded.load(Ordering::Acquire);
         let drained = finished && consumed.saturating_add(discarded) >= produced;
         let presented = if drained {
             accepted
@@ -81,6 +84,78 @@ pub(super) struct Cons {
     latency_left: usize,
 }
 
+fn validate_resources(
+    channels: usize,
+    input_rate: u32,
+    output_rate: u32,
+    config: ResamplingChannelConfig,
+    playback: bool,
+) -> Result<(), StreamError> {
+    use super::ResampleQuality;
+    const MAX_QUEUE_SAMPLES: usize = 16_777_216;
+    if channels == 0
+        || channels > super::MAX_CHANNELS
+        || !(super::MIN_SAMPLE_RATE..=super::MAX_SAMPLE_RATE).contains(&input_rate)
+        || !(super::MIN_SAMPLE_RATE..=super::MAX_SAMPLE_RATE).contains(&output_rate)
+        || u64::from(input_rate) > u64::from(output_rate) * 64
+        || u64::from(output_rate) > u64::from(input_rate) * 64
+        || !config.capacity_seconds.is_finite()
+        || config.capacity_seconds <= 0.0
+        || !config.latency_seconds.is_finite()
+        || config.latency_seconds < 0.0
+        || config.resampler_config.chunk_size == 0
+        || config.resampler_config.chunk_size > 8192
+    {
+        return Err(StreamError::InvalidConfig);
+    }
+    let max_queue_frames = MAX_QUEUE_SAMPLES / channels;
+    let requested = (config.capacity_seconds * f64::from(output_rate)).ceil();
+    let latency = if playback {
+        (config.latency_seconds * f64::from(output_rate)).round()
+    } else {
+        0.0
+    };
+    if requested > max_queue_frames as f64 || latency > max_queue_frames as f64 {
+        return Err(StreamError::InvalidConfig);
+    }
+    // Bound the queue and resampler *before* constructing PacketResampler.
+    // FFT grain sizes grow with coprime rates, even with a small chunk_size.
+    let packet_bound = if input_rate == output_rate {
+        1
+    } else if config.resampler_config.quality == ResampleQuality::High {
+        let (mut a, mut b) = (input_rate, output_rate);
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        let input_grain = (input_rate / a) as usize;
+        let output_grain = (output_rate / a) as usize;
+        if input_grain > 8192 || output_grain > 8192 {
+            return Err(StreamError::InvalidConfig);
+        }
+        let chunk = config.resampler_config.chunk_size;
+        let sub_chunks = (chunk / 256).max(1);
+        let fft_chunks = (chunk / sub_chunks).div_ceil(input_grain).max(1);
+        let fft_input = fft_chunks * input_grain;
+        let fft_output = fft_chunks * output_grain;
+        chunk.div_ceil(fft_input) * fft_output
+    } else {
+        // Polynomial and sinc use fixed input blocks. This intentionally
+        // conservative bound covers filter lookahead and output rounding.
+        ((config.resampler_config.chunk_size + 512) * output_rate as usize)
+            .div_ceil(input_rate as usize)
+            + 1024
+    };
+    if packet_bound > 65_536
+        || packet_bound
+            .saturating_mul(3)
+            .saturating_add(latency as usize)
+            > max_queue_frames
+    {
+        return Err(StreamError::InvalidConfig);
+    }
+    Ok(())
+}
+
 pub(super) fn bounded_channel(
     channels: usize,
     input_rate: u32,
@@ -88,15 +163,7 @@ pub(super) fn bounded_channel(
     config: ResamplingChannelConfig,
     playback: bool,
 ) -> Result<(Prod, Cons), StreamError> {
-    if !config.capacity_seconds.is_finite()
-        || config.capacity_seconds <= 0.0
-        || !config.latency_seconds.is_finite()
-        || config.latency_seconds < 0.0
-        || config.resampler_config.chunk_size == 0
-        || config.resampler_config.chunk_size > 65_536
-    {
-        return Err(StreamError::InvalidConfig);
-    }
+    validate_resources(channels, input_rate, output_rate, config, playback)?;
     if config.underflow_autocorrect_percent_threshold.is_some()
         || config.overflow_autocorrect_percent_threshold.is_some()
     {
@@ -338,5 +405,79 @@ impl Cons {
                 .consumed
                 .fetch_add((frames - latency) as u64, Ordering::Release);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_eof_observation_never_retires_an_unconsumed_final_packet() {
+        struct ReleaseOnExit<'a>(&'a std::sync::atomic::AtomicUsize);
+        impl Drop for ReleaseOnExit<'_> {
+            fn drop(&mut self) {
+                self.0.store(usize::MAX, Ordering::Release);
+            }
+        }
+        // Each generation publishes exactly one final output frame and has no
+        // consumer advancement. Publication races stats() across many fresh
+        // generations, without a reset that could itself change the contract.
+        let channels: Vec<_> = (0..10_000)
+            .map(|_| {
+                bounded_channel(
+                    1,
+                    48_000,
+                    48_000,
+                    super::super::media_channel_config(0.001),
+                    true,
+                )
+                .unwrap()
+            })
+            .collect();
+        let observed: Vec<_> = channels
+            .iter()
+            .map(|(prod, _)| ArcGc::clone(&prod.shared))
+            .collect();
+        let ready = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let ready = &ready;
+            scope.spawn(move || {
+                let input = InterleavedSlice::new(&[0.25], 1, 1).unwrap();
+                for (index, (mut prod, _cons)) in channels.into_iter().enumerate() {
+                    while ready.load(Ordering::Acquire) <= index {
+                        std::hint::spin_loop();
+                    }
+                    assert_eq!(prod.push(&input, 0, 1), PushStatus::Ok);
+                    assert!(prod.finish());
+                    // _cons remains undrained; stats must not mistake old
+                    // produced=0 for a finished generation with no output.
+                }
+            });
+            // A failed assertion must release the publisher's handshake so a
+            // reproducing regression fails rather than hanging scope shutdown.
+            let _release = ReleaseOnExit(ready);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            for (index, shared) in observed.into_iter().enumerate() {
+                ready.store(index + 1, Ordering::Release);
+                loop {
+                    let stats = shared.stats();
+                    assert!(
+                        !stats.drained,
+                        "final output was retired before consumption: {stats:?}"
+                    );
+                    if stats.finished {
+                        assert_eq!(stats.produced_output_frames, 1);
+                        assert_eq!(stats.accepted_source_frames, 1);
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "EOF publisher did not finish"
+                    );
+                    std::hint::spin_loop();
+                }
+            }
+        });
     }
 }
