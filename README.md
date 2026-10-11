@@ -26,6 +26,13 @@ for supported semantics, validation, and the remaining device/native acceptance
 gates. This is a Git-pinned fork extension; registry Firewheel 0.14 does not provide
 these restored nodes.
 
+`scripts/validate-standalone.sh` provides local device-free stream tests,
+no_std checks, selected dependency checks and formatting when relevant to a
+change. Use focused checks during prototyping; broader conformance and
+automation follow intentionally stabilized behavior. This fork has no GitHub
+Actions workflows. Changes are committed and pushed directly to `main`;
+pull requests are used only when the maintainer requests one.
+
 ## The Future of this Project
 
 Firewheel is currently planned to be upstreamed into the [Bevy](https://bevy.org/) game engine where it will become the default audio engine. (The current implementation can be found in the [bevy_seedling](https://github.com/CorvusPrudens/bevy_seedling) repository.) The goal is to both make Bevy integration easier by avoiding circular dependencies, and to ease the maintanance burden of a project that has experienced more feature creep than what the author originally anticipated.

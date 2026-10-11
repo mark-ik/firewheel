@@ -147,8 +147,17 @@ reading final producer counters and subsequent consumption.
 Strict Clippy passed for nodes and integration tests, as did rustfmt, warning-denied
 node rustdoc, no_std/libm, serde/scheduled-events, all node features, and the
 CPAL/sampler/peak-meter/tracing consumer feature combination. Standalone dependency
-inspection contains no Bevy ECS. The new CI matrix repeats CPU/no_std/no-ECS checks
-on Linux, macOS and Windows; remote execution remains a separate result.
+inspection contains no Bevy ECS. The initial GitHub matrix repeated these checks
+on Linux, macOS and Windows. The maintainer subsequently requested no GitHub
+workflows and direct main publication; `scripts/validate-standalone.sh` now runs
+the local stream/no_std/no-ECS/formatting gate. Device and other-target acceptance
+remain explicit checks, independent of the removed workflow.
+
+Canonical source and plans carry the execution frontier. The local wrapper is
+available for changes to this stream contract, not a mandatory gate for every
+interim commit. During rapid prototyping, scope checks to concrete questions;
+broader conformance and automation follow behavior intentionally stabilized
+for evaluation.
 
 CPU checks do not establish audible quality, calibrated latency, long-run drift,
 hardware failure/restart, native rendering, fresh-process reopen, or other-target
