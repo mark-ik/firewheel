@@ -9,7 +9,10 @@ Restore a focused bounded capture and playback boundary for Hocket and Redshank.
 Upstream removed the old reader/writer nodes in 71fbe0f7; the streamed sampler
 is unfinished. This extension retains the recognizable old stream-node API while
 implementing a queue whose capacity, resampler headroom, EOF, and source position
-are explicit. It uses fixed-resample 0.13 PacketResampler and ringbuf 0.5.
+are explicit. It uses fixed-resample 0.13 PacketResampler and ringbuf 0.5. The
+fork owns a small preallocated PacketResamplerBuffer implementation: the dependency's
+interleaved delay-trim copy uses an incorrect source-range end, leaving zeros in
+very short EOF output. The owned buffer copies src..src+count exactly.
 
 Billy Messenger's upstream graph kernel, licenses, authorship and history remain
 intact. No application schema, decoder, storage, network handle or device policy
@@ -128,6 +131,13 @@ all 16 channels, clone lifetime, stale events, pause/reset,
 initial latency, underrun clock behavior, subpacket EOF, and uneven backlog packets
 at 1k→48k, 8k→44.1k, 11.025k→48k, 22.05k→48k, 48k→44.1k, 48k→8k,
 44.1k→48k and equal-rate conversion.
+
+Short EOF material is checked through both reader and writer graphs for all four
+resampler qualities, mono/stereo, 37/73/317 source frames, and six rate pairs. These
+288 cases assert actual nonzero material, channel proportionality and exact clocks,
+including the 37-frame 8k→44.1k consumer reproducer; frame counts alone did not
+detect the dependency's delay-copy defect. Capture EOF runs under the callback
+allocation/deallocation guard.
 
 Local result: 14 integration tests passed, zero callback allocations/deallocations,
 plus a synchronized 10,000-generation concurrent EOF publication test. Extreme/

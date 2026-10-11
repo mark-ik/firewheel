@@ -417,30 +417,81 @@ fn resampled_backlogs_eof_and_source_clocks_cover_low_and_noninteger_rates() {
 
 #[test]
 fn subpacket_eof_flushes_capture_and_playback_without_source_padding() {
-    let (mut offline, mut state, _) = writer(8_000, 48_000, 1, media_channel_config(0.04));
-    state.push_interleaved(&[0.5; 73]);
-    assert_eq!(state.stats().unwrap().queued_source_frames, 73);
-    assert!(state.finish_stream());
-    let output = offline.render(500);
-    assert!(output.iter().any(|v| v.abs() > 0.1));
-    let stats = state.stats().unwrap();
-    assert_eq!(stats.produced_output_frames, 438);
-    assert_eq!(stats.accepted_source_frames, 73);
-    assert_eq!(stats.presented_source_frames, 73);
-    assert!(stats.drained);
+    // Delay trim must move the actual source into every retained output frame,
+    // including coprime-rate EOF packets whose length is shorter than delay.
+    for quality in [
+        ResampleQuality::VeryLow,
+        ResampleQuality::Low,
+        ResampleQuality::High,
+        ResampleQuality::HighWithLowLatency,
+    ] {
+        for (input_rate, output_rate) in [
+            (1_000, 48_000),
+            (8_000, 44_100),
+            (8_000, 48_000),
+            (11_025, 48_000),
+            (48_000, 44_100),
+            (48_000, 8_000),
+        ] {
+            for channels in [1, 2] {
+                for source_frames in [37, 73, 317] {
+                    let mut config = media_channel_config(1.0);
+                    config.resampler_config.quality = quality;
+                    let input: Vec<_> = (0..source_frames)
+                        .flat_map(|_| (0..channels).map(|ch| if ch == 0 { 0.25 } else { -0.5 }))
+                        .collect();
+                    let expected = (source_frames as u64 * output_rate as u64
+                        + input_rate as u64 / 2)
+                        / input_rate as u64;
+                    let (mut offline, mut state, _) =
+                        writer(input_rate, output_rate, channels, config);
+                    assert_eq!(state.push_interleaved(&input), PushStatus::Ok);
+                    assert_eq!(
+                        state.stats().unwrap().queued_source_frames,
+                        source_frames as u64
+                    );
+                    assert!(state.finish_stream());
+                    let output = offline.render(expected as usize + 1);
+                    assert!(
+                        output.iter().any(|v| v.abs() > 0.01),
+                        "silent playback {quality:?} {input_rate}->{output_rate}/{channels}/{source_frames}"
+                    );
+                    let stats = state.stats().unwrap();
+                    assert_eq!(stats.produced_output_frames, expected);
+                    assert_eq!(stats.accepted_source_frames, source_frames as u64);
+                    assert_eq!(stats.presented_source_frames, source_frames as u64);
+                    assert!(stats.finished && stats.drained);
+                    for frame in output.chunks_exact(channels) {
+                        if channels == 2 {
+                            assert!((frame[1] + 2.0 * frame[0]).abs() < 0.001);
+                        }
+                    }
 
-    let (mut offline, mut state, _) = reader(8_000, 48_000, 1, media_channel_config(0.04));
-    offline.block(&[0.5; 73], &mut [0.0; 73]);
-    assert_eq!(state.available_frames(), 0);
-    state.finish_stream();
-    offline.block(&[0.75; 1], &mut [0.0; 1]);
-    assert_eq!(state.available_frames(), 438);
-    let mut output = [0.0; 438];
-    assert_eq!(state.read_interleaved(&mut output), Some(ReadStatus::Ok));
-    let stats = state.stats().unwrap();
-    assert_eq!(stats.accepted_source_frames, 73);
-    assert_eq!(stats.presented_source_frames, 73);
-    assert!(stats.finished && stats.drained);
+                    let (mut offline, mut state, _) =
+                        reader(input_rate, output_rate, channels, config);
+                    offline.block(&input, &mut vec![0.0; input.len()]);
+                    state.finish_stream();
+                    offline.block(&vec![0.75; channels], &mut vec![0.0; channels]);
+                    assert_eq!(state.available_frames(), expected as usize);
+                    let mut output = vec![0.0; expected as usize * channels];
+                    assert_eq!(state.read_interleaved(&mut output), Some(ReadStatus::Ok));
+                    assert!(
+                        output.iter().any(|v| v.abs() > 0.01),
+                        "silent capture {quality:?} {input_rate}->{output_rate}/{channels}/{source_frames}"
+                    );
+                    let stats = state.stats().unwrap();
+                    assert_eq!(stats.accepted_source_frames, source_frames as u64);
+                    assert_eq!(stats.presented_source_frames, source_frames as u64);
+                    assert!(stats.finished && stats.drained);
+                    for frame in output.chunks_exact(channels) {
+                        if channels == 2 {
+                            assert!((frame[1] + 2.0 * frame[0]).abs() < 0.001);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]

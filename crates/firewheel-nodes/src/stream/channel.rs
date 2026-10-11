@@ -3,9 +3,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use audioadapter::{Adapter, AdapterMut};
 use audioadapter_buffers::direct::InterleavedSlice;
 use firewheel_core::collector::ArcGc;
-use fixed_resample::{Interleaved, LastPacketInfo, PacketResampler};
+use fixed_resample::{LastPacketInfo, PacketResampler};
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 
+use super::resampler_buffer::StreamPacketBuffer;
 use super::{PushStatus, ReadStatus, ResamplingChannelConfig, StreamError, StreamStats};
 
 pub(super) struct Shared {
@@ -71,7 +72,7 @@ pub(super) struct Prod {
     ring: ringbuf::HeapProd<f32>,
     pub shared: ArcGc<Shared>,
     channels: usize,
-    resampler: Option<PacketResampler<f32, Interleaved<f32>>>,
+    resampler: Option<PacketResampler<f32, StreamPacketBuffer>>,
     scratch: Vec<f32>,
     accepted: u64,
     produced: u64,

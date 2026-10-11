@@ -13,6 +13,7 @@
 
 mod channel;
 pub mod reader;
+mod resampler_buffer;
 pub mod writer;
 
 pub use fixed_resample::{
